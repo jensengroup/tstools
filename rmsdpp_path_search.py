@@ -10,6 +10,7 @@ from rdkit import Chem
 import xtb_io
 from xyz2mol_local import xyz2AC_vdW  # Remove this dependency
 
+
 def run_cmd(cmd):
     """Function to run xTB program"""
     cmd = cmd.split()
@@ -254,6 +255,8 @@ class XtbPathSearch:
 
         def run_params_set(kpush, kpull, alpha, forward):
             """A parameter set is run 3 times. Each time it is multiplied by 1.5"""
+
+            PathResults = namedtuple("PathResults", "rmsd energies path")
 
             run_info = []
             for iter_num in range(3):
