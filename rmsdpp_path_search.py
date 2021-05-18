@@ -315,6 +315,17 @@ class XtbPathSearch:
 
         return "increace temp", None
 
+    def _compute_sp_energies(self, path, **kwds):
+        """ The Path energies doesn't correspond to SP energies.
+        To be sure what the energies is, perform SP xTB energies on path.
+        """
+        xtbcalc = XtbCalculator(charge=self._charge, spin=self._spin) # Add ekstra kwds such as solvent
+        path_sp_energies = []
+        for path_point in path:
+            energies, _ = xtbcalc(self._atmoic_symbols, path_point, namespace='sp_calc')
+            path_sp_energies.append(energies['elec_energy'])
+        return np.asarray(path_sp_energies)    
+
     def run_path_search(
         self,
         reactant_coords: np.ndarray,
@@ -323,8 +334,6 @@ class XtbPathSearch:
     ):
         """
         Run the path search and return pathinfo:
-
-        PathInfo(rmsd, path energies, path coordinates)
         """
         self._reactant_coords = reactant_coords
         self._product_coords = product_coords
@@ -341,4 +350,6 @@ class XtbPathSearch:
 
         # If it didn't converge now, stop.
         if return_msg:
+            path_info = path_info._asdict()
+            path_info['energies'] = self._compute_sp_energies(path_info['path'])
             return path_info
