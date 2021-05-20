@@ -104,3 +104,18 @@ def write_path_input(
             path_inp_file.write(pathfile_txt)
     else:
         return pathfile_txt
+
+def write_scan_input(bond_identifier, bond_distances, filename = None):
+    """ """
+    scaninp_txt = "$scan\n"
+    scaninp_txt += "    mode=concerted\n"
+    for (atom_i, atom_j), bond_dist in zip(bond_identifier, bond_distances):
+        scaninp_txt += f"    distance: {atom_i + 1},{atom_j + 1},{bond_dist}; "
+        scaninp_txt += f"{bond_dist},{bond_dist + 2},40\n"
+    scaninp_txt += "$end"
+    
+    if filename is not None:
+        with open(filename, "w") as scaninp:
+            scaninp.write(scaninp_txt)
+    else:
+        return scaninp_txt

@@ -81,7 +81,7 @@ class XtbCalculator:
         """ """
         xtb_cmd = f"{self._xtb_path} {input_filename} --norestart"
         xtb_cmd += f" --chrg {self._charge} --uhf {self._spin - 1}"
-        xtb_cmd += f" --namespace {input_filename}"
+        xtb_cmd += f" --namespace {input_filename.split('.')[0]}"
 
         if self._thermal_energies:
             xtb_cmd += " --hess"
@@ -198,7 +198,6 @@ class XtbPathSearch:
 
         # TODO add ekstra kwds.
 
-        print(cmd)
         return cmd
 
     def _read_final_rmsd(self, output):
@@ -316,15 +315,17 @@ class XtbPathSearch:
         return "increace temp", None
 
     def _compute_sp_energies(self, path, **kwds):
-        """ The Path energies doesn't correspond to SP energies.
+        """The Path energies doesn't correspond to SP energies.
         To be sure what the energies is, perform SP xTB energies on path.
         """
-        xtbcalc = XtbCalculator(charge=self._charge, spin=self._spin) # Add ekstra kwds such as solvent
+        xtbcalc = XtbCalculator(
+            charge=self._charge, spin=self._spin
+        )  # Add ekstra kwds such as solvent
         path_sp_energies = []
         for path_point in path:
-            energies, _ = xtbcalc(self._atmoic_symbols, path_point, namespace='sp_calc')
-            path_sp_energies.append(energies['elec_energy'])
-        return np.asarray(path_sp_energies)    
+            energies, _ = xtbcalc(self._atmoic_symbols, path_point, namespace="sp_calc")
+            path_sp_energies.append(energies["elec_energy"])
+        return np.asarray(path_sp_energies)
 
     def run_path_search(
         self,
@@ -351,5 +352,132 @@ class XtbPathSearch:
         # If it didn't converge now, stop.
         if return_msg:
             path_info = path_info._asdict()
-            path_info['energies'] = self._compute_sp_energies(path_info['path'])
+            path_info["energies"] = self._compute_sp_energies(path_info["path"])
             return path_info
+
+
+class XtbScanPath:
+
+    tested_xtb_versions = ["6.1.4"]
+
+    def __init__(
+        self,
+        charge: int = 0,
+        spin: int = 1,
+        opt: bool = True,
+        thermal_energies: bool = False,
+        **kwds,
+    ):
+        """ """
+
+        self._charge = charge
+        self._spin = spin
+        self._run_opt = opt
+        self._thermal_energies = thermal_energies
+        self._ekstra_xtb_kwds = kwds  # Solvent, GFN-x,
+
+        # Test that the xTB version is actually valid.
+        self._setup_xtb_enviroment()
+        xtb_version = get_xtb_version(self._xtb_path)
+        if xtb_version not in self.tested_xtb_versions:
+            raise XtbError(f"xTB version {xtb_version} is not tested")
+
+    def _setup_xtb_enviroment(self):
+        """
+        Setup xTB environment
+        """
+        os.environ["OMP_NUM_THREADS"] = str(1)
+        os.environ["MKL_NUM_THREADS"] = str(1)
+
+        if "XTB_CMD" not in os.environ:
+            raise XtbError('XTB_CMD not defined. export XTB_CMD="path to xtb"')
+
+        self._xtb_path = Path(os.environ["XTB_CMD"])
+        os.environ["XTBPATH"] = str(self._xtb_path.parents[1])
+
+    def _make_cmd(self, input_filename: str) -> str:
+        """ """
+        xtb_cmd = f"{self._xtb_path} {input_filename} --input scan.inp --norestart"
+        xtb_cmd += f" --chrg {self._charge} --uhf {self._spin - 1}"
+        xtb_cmd += f" --namespace {input_filename.split('.')[0]}"
+
+        if self._thermal_energies:
+            xtb_cmd += " --hess"
+
+        if self._run_opt:
+            xtb_cmd += " --opt loose"
+
+        for kwd, key in self._ekstra_xtb_kwds.items():
+            xtb_cmd += f" --{kwd} {key}"
+
+        return xtb_cmd
+
+    def _bond_distance(self, coords):
+        """ """
+        distances = []
+        for atom_i_idx, atom_j_idx in self._bonds_to_scan:
+            atom_i_pos = coords[atom_i_idx]
+            atom_j_pos = coords[atom_j_idx]
+            distances.append(round(np.sqrt(np.sum((atom_i_pos - atom_j_pos) ** 2)), 5))
+        return np.asarray(distances)
+
+    def _run_reactant_or_product(self):
+        """Sum bond distances and"""
+        reactant_bond_dist = self._bond_distance(self._reactant_coords)
+        product_bond_dist = self._bond_distance(self._product_coords)
+
+        # Check that all distances in one is larger, not just one.
+        dist_check = reactant_bond_dist < product_bond_dist
+        if not np.all(dist_check == dist_check[0]):
+            raise XtbError("Likey not a pure dissociation/association reaction")
+
+        if sum(reactant_bond_dist) < sum(product_bond_dist):
+            return "reactant"
+        else:
+            return "product"
+
+    def _write_path_input(self):
+        """Write reactant and product .xyz files, and the path.inp file."""
+        xtb_io.write_xyz(
+            self._reactant_coords, self._atmoic_symbols, filename="reactant.xyz"
+        )
+        xtb_io.write_xyz(
+            self._product_coords, self._atmoic_symbols, filename="product.xyz"
+        )
+
+        bond_distances = self._bond_distance(self._product_coords)
+        xtb_io.write_scan_input(
+            self._bonds_to_scan, bond_distances, filename="scan.inp"
+        )
+
+    def run_path_scan(
+        self,
+        reactant_coords: np.ndarray,
+        product_coords: np.ndarray,
+        atom_symbols: list[str],
+        bonds_to_scan: list[tuple[int, int]],
+    ) -> tuple[np.ndarray, np.ndarray]:
+
+        self._reactant_coords = reactant_coords
+        self._product_coords = product_coords
+        self._atmoic_symbols = atom_symbols
+        self._bonds_to_scan = bonds_to_scan
+
+        with tempfile.TemporaryDirectory(dir=".") as tempdirname:
+            os.chdir(tempdirname)
+
+            self._write_path_input()
+            to_run = self._run_reactant_or_product()
+            scan_cmd = self._make_cmd(to_run + ".xyz")
+
+            out, err = run_cmd(scan_cmd)
+            scan_energies, scan_path = xtb_io.read_xtb_path(f"{to_run}.xtbscan.log")
+
+            os.chdir("..")
+
+        # If scan is performed from prod -> reac flip path/energies.
+        if to_run == "product":
+            scan_energies = np.flip(scan_energies)
+            scan = np.flip(scan_path, axis=0)
+
+        return scan_energies, scan_path
