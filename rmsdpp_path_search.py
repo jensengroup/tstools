@@ -1,7 +1,9 @@
 import os
 import tempfile
+import subprocess
 from pathlib import Path
 from collections import namedtuple
+
 from subprocess import Popen, PIPE
 
 import numpy as np
@@ -11,19 +13,25 @@ import xtb_io
 from xyz2mol_local import xyz2AC_vdW  # Remove this dependency
 
 
-def run_cmd(cmd):
-    """Function to run xTB program"""
-    cmd = cmd.split()
-    p = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    output, err = p.communicate()
-    return output.decode("utf-8"), err.decode("utf-8")
+def run_shell_cmd(cmd, cwd=None):
+    """ Function to run xTB program """
+    popen = subprocess.Popen(
+        cmd, 
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        shell=True,
+        cwd=cwd
+    )
+    output, err = popen.communicate()
+    return output, err 
 
 
 def get_xtb_version(xtb_path):
     """
     Return the xTB version of xtb_path
     """
-    out, _ = run_cmd(f"{xtb_path} --version")
+    out, _ = run_shell_cmd(f"{xtb_path} --version")
     xtb_version = out.strip().split("\n")[-2].split()[2]
     return xtb_version
 
@@ -41,6 +49,7 @@ class XtbCalculator:
 
     def __init__(
         self,
+        scr = '_xtb_scr_dir_',
         charge: int = 0,
         spin: int = 1,
         opt: bool = True,
@@ -52,6 +61,7 @@ class XtbCalculator:
 
         # TODO: make opt an "ekstra" kwd. Such that opt=loose,tight, etc.
         """
+        self.scr = Path(scr)
         self._charge = charge
         self._spin = spin
         self._run_opt = opt
@@ -63,6 +73,9 @@ class XtbCalculator:
         xtb_version = get_xtb_version(self._xtb_path)
         if xtb_version not in self.tested_xtb_versions:
             raise XtbError(f"xTB version {xtb_version} is not tested")
+
+        # set scratch dir
+        self.scr.mkdir(parents=True, exist_ok=True)
 
     def _setup_xtb_enviroment(self):
         """
@@ -95,14 +108,14 @@ class XtbCalculator:
         return xtb_cmd
 
     def _write_input(
-        self, atom_symbols: np.ndarray, coords: np.ndarray, namespace: str
+        self, atom_symbols: np.ndarray, coords: np.ndarray, namespace: str, path: str
     ) -> str:
         """Write xyz file"""
         if len(atom_symbols) != len(coords):
             raise XtbError("Length of atom_symbols and coords don't match")
 
         input_filename = namespace + ".xyz"
-        with open(input_filename, "w") as inputfile:
+        with open(path / input_filename, "w") as inputfile:
             inputfile.write(f"{len(atom_symbols)} \n \n")
             for symbol, coord in zip(atom_symbols, coords):
                 inputfile.write(f"{symbol}  {coord[0]} {coord[1]} {coord[2]} \n")
@@ -115,17 +128,13 @@ class XtbCalculator:
         Run xTB calculation for the structure defined by the atom_symbols and coords.
         """
         self._setup_xtb_enviroment()
-
-        with tempfile.TemporaryDirectory(dir=".") as tmpdirname:
-            os.chdir(tmpdirname)
-
-            inpfile = self._write_input(atom_symbols, coords, namespace)
+        with tempfile.TemporaryDirectory(dir=self.scr) as temp:
+            inpfile = self._write_input(atom_symbols, coords, namespace, Path(temp))
             xtb_cmd = self._make_cmd(inpfile)
-            out, err = run_cmd(xtb_cmd)
+            out, err = run_shell_cmd(xtb_cmd, cwd=temp)
+
             if err.strip() != "normal termination of xtb":
                 raise XtbError("Calculation of {namespace} terminated with error")
-
-            os.chdir("..")
 
         energies = xtb_io.read_energy(out)
         coordinates = xtb_io.read_opt_structure(out)
@@ -133,7 +142,7 @@ class XtbCalculator:
         return energies, coordinates
 
 
-class XtbPathSearch:
+class XtbPathSearch:  # TODO rename to XtbPPSearch
     """
     Run xTB path search.
     """
@@ -143,8 +152,9 @@ class XtbPathSearch:
     KPULL_LIST = [-0.02, -0.02, -0.02, -0.03, -0.03, -0.04, -0.04]
     ALP_LIST = [0.6, 0.3, 0.3, 0.6, 0.6, 0.6, 0.4]
 
-    def __init__(self, charge: int = 0, spin: int = 1, nruns: int = 1, **kwds):
-
+    def __init__(self, scr = '_xtb_scr_dir_', charge: int = 0, spin: int = 1, nruns: int = 1, **kwds):
+        
+        self.scr = Path(scr)
         self._charge = charge
         self._spin = spin
 
@@ -161,6 +171,9 @@ class XtbPathSearch:
         if xtb_version not in self.tested_xtb_versions:
             raise XtbError(f"xTB version {xtb_version} is not tested")
 
+        # Make scratch dir
+        self.scr.mkdir(parents=True, exist_ok=True)
+
     def _setup_xtb_enviroment(self) -> None:
         """
         Setup xTB environment
@@ -174,17 +187,16 @@ class XtbPathSearch:
         self._xtb_path = Path(os.environ["XTB_CMD"])
         os.environ["XTBPATH"] = str(self._xtb_path.parents[1])
 
-    def _write_path_input(self, kpush, kpull, alpha, temp) -> None:
+    def _write_path_input(self, kpush, kpull, alpha, temp, tempdir) -> None:
         """Write reactant and product .xyz files, and the path.inp file."""
-
         xtb_io.write_xyz(
-            self._reactant_coords, self._atmoic_symbols, filename="reactant.xyz"
+            self._reactant_coords, self._atmoic_symbols, filename=tempdir / "reactant.xyz"
         )
         xtb_io.write_xyz(
-            self._product_coords, self._atmoic_symbols, filename="product.xyz"
+            self._product_coords, self._atmoic_symbols, filename=tempdir / "product.xyz"
         )
 
-        xtb_io.write_path_input(kpush, kpull, alpha, temp, filename="path.inp")
+        xtb_io.write_path_input(kpush, kpull, alpha, temp, filename=tempdir / "path.inp")
 
     def _make_xtb_path_cmd(self, forward: bool = True) -> str:
         """Make cmdline cmd that can run the path search"""
@@ -231,18 +243,17 @@ class XtbPathSearch:
         """
         Run a xTB path search for a given parameter set.
         """
-        with tempfile.TemporaryDirectory(dir=".") as tempdirname:
-            os.chdir(tempdirname)
+        with tempfile.TemporaryDirectory(dir=self.scr) as tempdirname:
+            tempdirname = Path(tempdirname)
             self._write_path_input(
-                round(kpush, 4), round(kpull, 4), round(alpha, 4), temp
+                round(kpush, 4), round(kpull, 4), round(alpha, 4), temp, tempdirname
             )
             cmd = self._make_xtb_path_cmd(forward)
-            out, err = run_cmd(cmd)
+            out, err = run_shell_cmd(cmd, cwd=tempdirname)
             try:
-                relative_energies, path_coords = xtb_io.read_xtb_path("xtbpath_1.xyz")
+                relative_energies, path_coords = xtb_io.read_xtb_path(tempdirname / "xtbpath_1.xyz")
             except:
                 pass
-            os.chdir("..")
 
         if err.strip() != "normal termination of xtb":
             return None, None, None
@@ -340,9 +351,6 @@ class XtbPathSearch:
         self._product_coords = product_coords
         self._atmoic_symbols = atom_symbols
 
-        os.makedirs("xtbpath_search")
-        os.chdir("xtbpath_search")
-
         return_msg, path_info = self._find_xtb_path(temperature=300)
         if return_msg == "increace temp":
             return_msg, path_info = self._find_xtb_path(temperature=6000)
@@ -362,6 +370,7 @@ class XtbScanPath:
 
     def __init__(
         self,
+        scr = "_xtb_scr_dir_",
         charge: int = 0,
         spin: int = 1,
         opt: bool = True,
@@ -436,18 +445,18 @@ class XtbScanPath:
         else:
             return "product"
 
-    def _write_path_input(self):
+    def _write_path_input(self, path):
         """Write reactant and product .xyz files, and the path.inp file."""
         xtb_io.write_xyz(
-            self._reactant_coords, self._atmoic_symbols, filename="reactant.xyz"
+            self._reactant_coords, self._atmoic_symbols, filename=path / "reactant.xyz"
         )
         xtb_io.write_xyz(
-            self._product_coords, self._atmoic_symbols, filename="product.xyz"
+            self._product_coords, self._atmoic_symbols, filename=path / "product.xyz"
         )
 
         bond_distances = self._bond_distance(self._product_coords)
         xtb_io.write_scan_input(
-            self._bonds_to_scan, bond_distances, filename="scan.inp"
+            self._bonds_to_scan, bond_distances, filename=path / "scan.inp"
         )
 
     def run_path_scan(
@@ -464,20 +473,19 @@ class XtbScanPath:
         self._bonds_to_scan = bonds_to_scan
 
         with tempfile.TemporaryDirectory(dir=".") as tempdirname:
-            os.chdir(tempdirname)
-
-            self._write_path_input()
+            tempdirname = Path(tempdirname)
+            self._write_path_input(tempdirname)
             to_run = self._run_reactant_or_product()
             scan_cmd = self._make_cmd(to_run + ".xyz")
 
-            out, err = run_cmd(scan_cmd)
-            scan_energies, scan_path = xtb_io.read_xtb_path(f"{to_run}.xtbscan.log")
-
-            os.chdir("..")
+            out, err = run_shell_cmd(scan_cmd, cwd=tempdirname)
+            scan_energies, scan_path = xtb_io.read_xtb_path(tempdirname / f"{to_run}.xtbscan.log")
 
         # If scan is performed from prod -> reac flip path/energies.
         if to_run == "product":
             scan_energies = np.flip(scan_energies)
             scan = np.flip(scan_path, axis=0)
 
+        rel_energy = scan_energies - scan_energies[0]
+        print(rel_energy*627.503)
         return scan_energies, scan_path
