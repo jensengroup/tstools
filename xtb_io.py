@@ -1,5 +1,7 @@
-import numpy as np
+import pkgutil
+import string
 
+import numpy as np
 
 def read_energy(out) -> dict[str, float]:
     """Read energies from xTB output"""
@@ -59,53 +61,26 @@ def read_xtb_path(filename: str) -> tuple[np.ndarray, np.ndarray]:
     return relative_energies, path_coords
 
 
-def write_xyz(coords, atomic_symbols, filename: str = None) -> str:
+def write_xyz(coords, atomic_symbols) -> str:
     """Write xyz file. If filname write to file"""
 
     xyz = f"{len(atomic_symbols)}\n\n"
     for symbol, coord in zip(atomic_symbols, coords):
+        coord = [float(x) for x in coord]
         xyz += f"{symbol}  {coord[0]:.8f} {coord[1]:.8f} {coord[2]:.8f}\n"
-
-    if filename is not None:
-        with open(filename, "w") as xyzfile:
-            xyzfile.write(xyz)
-    else:
-        return xyz
+    return xyz
 
 
-def write_path_input(
-    kpush: float, kpull: float, alpha: float, temperature: float, filename: str = None
-) -> str:
-    """Writes the input file text needed for the xtb path search"""
+def get_rmsd_template():
+    """ Writes the input file text needed for the xtb path search """
+        
+    rmsd_template = string.Template(
+        pkgutil.get_data(__name__, "templates/rmsdpp_template").decode('utf-8')
+    )
+    return rmsd_template
 
-    # path block
-    pathfile_txt = "$path\n"
-    pathfile_txt += "    nrun=1\n"
-    pathfile_txt += "    nopt=100\n"
-    pathfile_txt += "    anopt=3\n"
-    pathfile_txt += f"    kpush={kpush}\n"
-    pathfile_txt += f"    kpull={kpull}\n"
-    pathfile_txt += f"    alp={alpha}\n"
-    # path_file += "    product={}"     # Can i pass this in the cmdline?
-    pathfile_txt += "$end\n"
 
-    # SCC block
-    pathfile_txt += "$scc\n"
-    pathfile_txt += f"    temp={temperature}\n"
-    pathfile_txt += "$end\n"
-
-    # opt block
-    pathfile_txt += "$opt\n"
-    pathfile_txt += "    optlevel=2\n"
-    pathfile_txt += "$end\n"
-
-    if filename is not None:
-        with open(filename, "w") as path_inp_file:
-            path_inp_file.write(pathfile_txt)
-    else:
-        return pathfile_txt
-
-def write_scan_input(bond_identifier, bond_distances, filename = None):
+def write_scan_input(bond_identifier, bond_distances):
     """ """
     scaninp_txt = "$scan\n"
     scaninp_txt += "    mode=concerted\n"
@@ -113,9 +88,5 @@ def write_scan_input(bond_identifier, bond_distances, filename = None):
         scaninp_txt += f"    distance: {atom_i + 1},{atom_j + 1},{bond_dist}; "
         scaninp_txt += f"{bond_dist},{bond_dist + 2},40\n"
     scaninp_txt += "$end"
-    
-    if filename is not None:
-        with open(filename, "w") as scaninp:
-            scaninp.write(scaninp_txt)
-    else:
-        return scaninp_txt
+
+    return scaninp_txt

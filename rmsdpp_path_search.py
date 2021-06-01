@@ -1,4 +1,5 @@
 import os
+import logging
 import tempfile
 import subprocess
 from pathlib import Path
@@ -12,6 +13,7 @@ from rdkit import Chem
 import xtb_io
 from xyz2mol_local import xyz2AC_vdW  # Remove this dependency
 
+_logger = logging.getLogger('rmsd_pp')
 
 def run_shell_cmd(cmd, cwd=None):
     """ Function to run xTB program """
@@ -116,9 +118,7 @@ class XtbCalculator:
 
         input_filename = namespace + ".xyz"
         with open(path / input_filename, "w") as inputfile:
-            inputfile.write(f"{len(atom_symbols)} \n \n")
-            for symbol, coord in zip(atom_symbols, coords):
-                inputfile.write(f"{symbol}  {coord[0]} {coord[1]} {coord[2]} \n")
+            inputfile.write(xtb_io.write_xyz(coords, atom_symbols))
         return input_filename
 
     def __call__(
@@ -188,15 +188,27 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
         os.environ["XTBPATH"] = str(self._xtb_path.parents[1])
 
     def _write_path_input(self, kpush, kpull, alpha, temp, tempdir) -> None:
-        """Write reactant and product .xyz files, and the path.inp file."""
-        xtb_io.write_xyz(
-            self._reactant_coords, self._atmoic_symbols, filename=tempdir / "reactant.xyz"
-        )
-        xtb_io.write_xyz(
-            self._product_coords, self._atmoic_symbols, filename=tempdir / "product.xyz"
-        )
+        """ Write reactant and product .xyz files, and the path.inp file. """
 
-        xtb_io.write_path_input(kpush, kpull, alpha, temp, filename=tempdir / "path.inp")
+        # Write .xyz input
+        with open(tempdir / "reactant.xyz", 'w') as reactant_xyz:
+            reactant_xyz.write(
+                xtb_io.write_xyz(self._reactant_coords, self._atmoic_symbols)
+            )
+
+        with open(tempdir / "product.xyz", 'w') as product_xyz:
+            product_xyz.write(
+                xtb_io.write_xyz(self._product_coords, self._atmoic_symbols)
+            )
+
+        # Write path input file
+        rmsd_template = xtb_io.get_rmsd_template()
+        with open(tempdir / "path.inp", 'w') as path_file:
+            path_file.write(
+                rmsd_template.safe_substitute(
+                    kpush=kpush, kpull=kpull, alpha=alpha, temperature=temp
+                )
+            )
 
     def _make_xtb_path_cmd(self, forward: bool = True) -> str:
         """Make cmdline cmd that can run the path search"""
@@ -207,7 +219,7 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
 
         cmd = f"{self._xtb_path} {tmp_reac} --path {tmp_prod} --input path.inp --norestart"
         cmd += f" --chrg {self._charge} --uhf {self._spin - 1}"
-
+        _logger.debug(cmd)
         # TODO add ekstra kwds.
 
         return cmd
@@ -303,7 +315,7 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
             )
 
             if found_path:
-                print(">> Found a path.")
+                _logger.info(" RMSD-PP found a path")
                 return True, run_info[-1]
 
             if self._is_reac_prod_identical(run_info[-1].path):
@@ -312,9 +324,7 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
                 else:
                     self._product_coords = run_info[-1].path[-1]
             else:
-                print(
-                    ">> Something happend but RMSD not below 0.5. Most likely not a onestep reaction."
-                )
+                _logger.error(" RMSD not below 0.5 A. Most likely not a onestep reaction")
                 return "found intermediate", None
 
             run_num += 1
@@ -353,6 +363,7 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
 
         return_msg, path_info = self._find_xtb_path(temperature=300)
         if return_msg == "increace temp":
+            _logger.info(" Increasing temperature to 6000 K.")
             return_msg, path_info = self._find_xtb_path(temperature=6000)
         elif return_msg == "found intermediate":
             return None
@@ -445,19 +456,26 @@ class XtbScanPath:
         else:
             return "product"
 
-    def _write_path_input(self, path):
+    def _write_path_input(self, tempdir):
         """Write reactant and product .xyz files, and the path.inp file."""
-        xtb_io.write_xyz(
-            self._reactant_coords, self._atmoic_symbols, filename=path / "reactant.xyz"
-        )
-        xtb_io.write_xyz(
-            self._product_coords, self._atmoic_symbols, filename=path / "product.xyz"
-        )
 
+        # Write .xyz input
+        with open(tempdir / "reactant.xyz", 'w') as reactant_xyz:
+            reactant_xyz.write(
+                xtb_io.write_xyz(self._reactant_coords, self._atmoic_symbols)
+            )
+
+        with open(tempdir / "product.xyz", 'w') as product_xyz:
+            product_xyz.write(
+                xtb_io.write_xyz(self._product_coords, self._atmoic_symbols)
+            )
+
+        # Write scan input file
         bond_distances = self._bond_distance(self._product_coords)
-        xtb_io.write_scan_input(
-            self._bonds_to_scan, bond_distances, filename=path / "scan.inp"
-        )
+        with open(tempdir / "scan.inp", 'w') as scan_file:
+            scan_file.write(
+                xtb_io.write_scan_input(self._bonds_to_scan, bond_distances)
+            )
 
     def run_path_scan(
         self,

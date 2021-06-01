@@ -1,0 +1,14 @@
+$path
+    nrun=1
+    nopt=100
+    anopt=3
+    kpush=$kpush
+    kpull=$kpull
+    alp=$alpha
+$end
+$scc
+    temp=$temperature
+$end
+$opt
+    optlevel=2
+$end
