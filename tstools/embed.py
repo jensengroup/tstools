@@ -122,7 +122,6 @@ def random_embedding(
     R. J. Shannon, E. M. Nunez, D. V. Shalashilin, D. R. Glowacki,
     arXiv [physics.chem-ph] 2021. http://arxiv.org/abs/2104.02389
     """
-
     np.random.seed(seed=seed)
 
     frag_molobjs = _sort_fragments_size(embed_fragments(molobjs, seed=seed))
@@ -155,5 +154,4 @@ def random_embedding(
 
         merged_molobj = Chem.CombineMols(merged_molobj, fragment_molobj)
 
-    # Chem.MolToMolFile(merged_molobj, "test_mol1.mol")
     return merged_molobj

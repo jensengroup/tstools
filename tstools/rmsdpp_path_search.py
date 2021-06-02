@@ -10,8 +10,8 @@ from subprocess import Popen, PIPE
 import numpy as np
 from rdkit import Chem
 
-import xtb_io
-from xyz2mol_local import xyz2AC_vdW  # Remove this dependency
+from tstools import xtb_io 
+from tstools.xyz2mol_local import xyz2AC_vdW  # Remove this dependency
 
 _logger = logging.getLogger("rmsd_pp")
 
