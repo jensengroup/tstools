@@ -13,20 +13,21 @@ from rdkit import Chem
 import xtb_io
 from xyz2mol_local import xyz2AC_vdW  # Remove this dependency
 
-_logger = logging.getLogger('rmsd_pp')
+_logger = logging.getLogger("rmsd_pp")
+
 
 def run_shell_cmd(cmd, cwd=None):
-    """ Function to run xTB program """
+    """Function to run xTB program"""
     popen = subprocess.Popen(
-        cmd, 
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True,
         shell=True,
-        cwd=cwd
+        cwd=cwd,
     )
     output, err = popen.communicate()
-    return output, err 
+    return output, err
 
 
 def get_xtb_version(xtb_path):
@@ -51,7 +52,7 @@ class XtbCalculator:
 
     def __init__(
         self,
-        scr = '_xtb_scr_dir_',
+        scr="_xtb_scr_dir_",
         charge: int = 0,
         spin: int = 1,
         opt: bool = True,
@@ -142,9 +143,13 @@ class XtbCalculator:
         return energies, coordinates
 
 
-class XtbPathSearch:  # TODO rename to XtbPPSearch
+class XtbPPCustomSearch:
     """
     Run xTB path search.
+
+    Implementation of: "Fast and automatic estimation of
+    transition state structures using tight binding quantum chemical calculations".
+    PeerJ Physical Chemistry 2:e15 https://doi.org/10.7717/peerj-pchem.15
     """
 
     tested_xtb_versions = ["6.1.4"]
@@ -152,8 +157,15 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
     KPULL_LIST = [-0.02, -0.02, -0.02, -0.03, -0.03, -0.04, -0.04]
     ALP_LIST = [0.6, 0.3, 0.3, 0.6, 0.6, 0.6, 0.4]
 
-    def __init__(self, scr = '_xtb_scr_dir_', charge: int = 0, spin: int = 1, nruns: int = 1, **kwds):
-        
+    def __init__(
+        self,
+        scr="_xtb_scr_dir_",
+        charge: int = 0,
+        spin: int = 1,
+        nruns: int = 1,
+        **kwds,
+    ):
+
         self.scr = Path(scr)
         self._charge = charge
         self._spin = spin
@@ -188,22 +200,22 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
         os.environ["XTBPATH"] = str(self._xtb_path.parents[1])
 
     def _write_path_input(self, kpush, kpull, alpha, temp, tempdir) -> None:
-        """ Write reactant and product .xyz files, and the path.inp file. """
+        """Write reactant and product .xyz files, and the path.inp file."""
 
         # Write .xyz input
-        with open(tempdir / "reactant.xyz", 'w') as reactant_xyz:
+        with open(tempdir / "reactant.xyz", "w") as reactant_xyz:
             reactant_xyz.write(
                 xtb_io.write_xyz(self._reactant_coords, self._atmoic_symbols)
             )
 
-        with open(tempdir / "product.xyz", 'w') as product_xyz:
+        with open(tempdir / "product.xyz", "w") as product_xyz:
             product_xyz.write(
                 xtb_io.write_xyz(self._product_coords, self._atmoic_symbols)
             )
 
         # Write path input file
         rmsd_template = xtb_io.get_rmsd_template()
-        with open(tempdir / "path.inp", 'w') as path_file:
+        with open(tempdir / "path.inp", "w") as path_file:
             path_file.write(
                 rmsd_template.safe_substitute(
                     kpush=kpush, kpull=kpull, alpha=alpha, temperature=temp
@@ -263,7 +275,9 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
             cmd = self._make_xtb_path_cmd(forward)
             out, err = run_shell_cmd(cmd, cwd=tempdirname)
             try:
-                relative_energies, path_coords = xtb_io.read_xtb_path(tempdirname / "xtbpath_1.xyz")
+                relative_energies, path_coords = xtb_io.read_xtb_path(
+                    tempdirname / "xtbpath_1.xyz"
+                )
             except:
                 pass
 
@@ -324,7 +338,9 @@ class XtbPathSearch:  # TODO rename to XtbPPSearch
                 else:
                     self._product_coords = run_info[-1].path[-1]
             else:
-                _logger.error(" RMSD not below 0.5 A. Most likely not a onestep reaction")
+                _logger.error(
+                    " RMSD not below 0.5 A. Most likely not a onestep reaction"
+                )
                 return "found intermediate", None
 
             run_num += 1
@@ -381,7 +397,7 @@ class XtbScanPath:
 
     def __init__(
         self,
-        scr = "_xtb_scr_dir_",
+        scr: str = "_xtb_scr_dir_",
         charge: int = 0,
         spin: int = 1,
         opt: bool = True,
@@ -460,19 +476,19 @@ class XtbScanPath:
         """Write reactant and product .xyz files, and the path.inp file."""
 
         # Write .xyz input
-        with open(tempdir / "reactant.xyz", 'w') as reactant_xyz:
+        with open(tempdir / "reactant.xyz", "w") as reactant_xyz:
             reactant_xyz.write(
                 xtb_io.write_xyz(self._reactant_coords, self._atmoic_symbols)
             )
 
-        with open(tempdir / "product.xyz", 'w') as product_xyz:
+        with open(tempdir / "product.xyz", "w") as product_xyz:
             product_xyz.write(
                 xtb_io.write_xyz(self._product_coords, self._atmoic_symbols)
             )
 
         # Write scan input file
         bond_distances = self._bond_distance(self._product_coords)
-        with open(tempdir / "scan.inp", 'w') as scan_file:
+        with open(tempdir / "scan.inp", "w") as scan_file:
             scan_file.write(
                 xtb_io.write_scan_input(self._bonds_to_scan, bond_distances)
             )
@@ -497,13 +513,13 @@ class XtbScanPath:
             scan_cmd = self._make_cmd(to_run + ".xyz")
 
             out, err = run_shell_cmd(scan_cmd, cwd=tempdirname)
-            scan_energies, scan_path = xtb_io.read_xtb_path(tempdirname / f"{to_run}.xtbscan.log")
+            scan_energies, scan_path = xtb_io.read_xtb_path(
+                tempdirname / f"{to_run}.xtbscan.log"
+            )
 
         # If scan is performed from prod -> reac flip path/energies.
         if to_run == "product":
             scan_energies = np.flip(scan_energies)
-            scan = np.flip(scan_path, axis=0)
+            scan_path = np.flip(scan_path, axis=0)
 
-        rel_energy = scan_energies - scan_energies[0]
-        print(rel_energy*627.503)
         return scan_energies, scan_path
