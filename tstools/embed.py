@@ -5,10 +5,26 @@ from itertools import product
 import numpy as np
 
 from rdkit import Chem
-from rdkit.Chem import rdDistGeom, rdMolTransforms
+from rdkit.Chem import (
+    AllChem,
+    rdDistGeom,
+    rdMolTransforms,
+    rdmolops,
+)
 from rdkit.Geometry import Point3D
 
+from tstools.utils import get_fragments
+
 _logger = logging.getLogger("embed")
+
+
+def reassign_atom_idx(mol):
+    """Reassigns the RDKit mol object atomid to atom mapped id"""
+    renumber = [(atom.GetIdx(), atom.GetAtomMapNum()) for atom in mol.GetAtoms()]
+    new_idx = [idx[0] for idx in sorted(renumber, key=lambda x: x[1])]
+    mol = Chem.RenumberAtoms(mol, new_idx)
+    rdmolops.AssignStereochemistry(mol, force=True)
+    return mol
 
 
 class EmbedError(Exception):
@@ -21,13 +37,17 @@ def embed_fragment(molobj: Chem.Mol, seed: int = 31) -> Chem.Mol:
     try:
         rdDistGeom.EmbedMolecule(
             rdmol,
-            useRandomCoords=True,
+            useRandomCoords=False,
             randomSeed=seed,
-            maxAttempts=10_000,  # more for strange molecules??
+            maxAttempts=10_000,
             ETversion=1,
         )
     except:
         raise EmbedError("RDKit Failed to embed Molecule.")
+
+    Chem.SanitizeMol(rdmol)
+    AllChem.UFFOptimizeMolecule(rdmol)
+
     return rdmol
 
 
@@ -84,14 +104,15 @@ def _check_embedded_fragments(new_molobj, old_molobj, cutoff=1.5):
 
 
 def simple_embed_and_translate(
-    molobjs: list[Chem.Mol], seed: int = 31, direction: list[float] = [0.4, 0.0, 0.0]
+    molobj: Chem.Mol, seed: int = 31, direction: list[float] = [0.4, 0.0, 0.0]
 ):
     """
     Embed fragments, and move fragment in `direction`.
     If more than 2 fragments it just embed on a line.
     """
 
-    frag_molobjs = _sort_fragments_size(embed_fragments(molobjs, seed=seed))
+    molobjs = get_fragments(molobj)
+    frag_molobjs = embed_fragments(molobjs, seed=seed)
     center_fragments(frag_molobjs)
     max_fragment_size = frag_molobjs[0].GetNumAtoms()
 
@@ -108,11 +129,11 @@ def simple_embed_and_translate(
         merged_molobj = Chem.CombineMols(merged_molobj, fragment_molobj)
         max_fragment_size += fragment_molobj.GetNumAtoms()
 
-    return merged_molobj
+    return reassign_atom_idx(merged_molobj)
 
 
 def random_embedding(
-    molobjs: list[Chem.Mol],
+    molobj: Chem.Mol,
     seed: int = 42,
     translation_distance: float = 4.0,
     distance_cutoff=2.0,
@@ -124,7 +145,8 @@ def random_embedding(
     """
     np.random.seed(seed=seed)
 
-    frag_molobjs = _sort_fragments_size(embed_fragments(molobjs, seed=seed))
+    molobjs = get_fragments(molobj)
+    frag_molobjs = embed_fragments(molobjs, seed=seed)
     center_fragments(frag_molobjs)
 
     for fragid, fragment_molobj in enumerate(frag_molobjs):
@@ -154,4 +176,4 @@ def random_embedding(
 
         merged_molobj = Chem.CombineMols(merged_molobj, fragment_molobj)
 
-    return merged_molobj
+    return reassign_atom_idx(merged_molobj)

@@ -1,6 +1,7 @@
 import os
 import logging
 import tempfile
+import shutil
 import subprocess
 from pathlib import Path
 from collections import namedtuple
@@ -52,7 +53,7 @@ class XtbCalculator:
 
     def __init__(
         self,
-        scr="_xtb_scr_dir_",
+        scr: str = "_xtb_scr_dir_",
         charge: int = 0,
         spin: int = 1,
         opt: bool = True,
@@ -160,6 +161,7 @@ class XtbPPCustomSearch:
     def __init__(
         self,
         scr="_xtb_scr_dir_",
+        save_paths: bool = False,
         charge: int = 0,
         spin: int = 1,
         nruns: int = 1,
@@ -167,6 +169,8 @@ class XtbPPCustomSearch:
     ):
 
         self.scr = Path(scr)
+        self._save_paths = save_paths
+        
         self._charge = charge
         self._spin = spin
 
@@ -263,7 +267,7 @@ class XtbPPCustomSearch:
             return True
         return False
 
-    def _run_path(self, kpush, kpull, alpha, temp, forward=True):
+    def _run_path(self, kpush, kpull, alpha, temp, forward=True, param_num=None, set_idx=None):
         """
         Run a xTB path search for a given parameter set.
         """
@@ -274,12 +278,26 @@ class XtbPPCustomSearch:
             )
             cmd = self._make_xtb_path_cmd(forward)
             out, err = run_shell_cmd(cmd, cwd=tempdirname)
+            
+            # Save output?
+            if self._save_paths:
+                shutil.copy2(
+                    tempdirname / "xtbpath_1.xyz",
+                    self.scr / f"r{set_idx}-p{param_num}_xtbpath.xyz"
+                )
+                shutil.copy2(tempdirname / "reactant.xyz", self.scr / f"r{set_idx}-p{param_num}_reactant.xyz")
+                shutil.copy2(tempdirname / "product.xyz", self.scr / f"r{set_idx}-p{param_num}_product.xyz")
+                
+                with open(self.scr / f"r{set_idx}-p{param_num}_output.out", 'w') as outfile:
+                    outfile.write(out)
+            
+            # Read path
             try:
                 relative_energies, path_coords = xtb_io.read_xtb_path(
                     tempdirname / "xtbpath_1.xyz"
                 )
             except:
-                pass
+                raise XtbError('No pathfile to read')
 
         if err.strip() != "normal termination of xtb":
             return None, None, None
@@ -289,7 +307,7 @@ class XtbPPCustomSearch:
     def _find_xtb_path(self, temperature: float = 300):
         """Run through KPULL and ALP lists and perform a xTB path scan"""
 
-        def run_params_set(kpush, kpull, alpha, forward):
+        def run_params_set(kpush, kpull, alpha, forward, set_idx):
             """A parameter set is run 3 times. Each time it is multiplied by 1.5"""
 
             PathResults = namedtuple("PathResults", "rmsd energies path")
@@ -302,6 +320,8 @@ class XtbPPCustomSearch:
                     alpha=alpha,
                     temp=temperature,
                     forward=forward,
+                    param_num=iter_num,
+                    set_idx=set_idx
                 )
 
                 rmsd = self._read_final_rmsd(out)
@@ -325,7 +345,7 @@ class XtbPPCustomSearch:
             else:
                 kpush = 0.01
             found_path, run_info = run_params_set(
-                kpush=kpush, kpull=kpull, alpha=alpha, forward=reaction_forward
+                kpush=kpush, kpull=kpull, alpha=alpha, forward=reaction_forward, set_idx=set_idx
             )
 
             if found_path:
