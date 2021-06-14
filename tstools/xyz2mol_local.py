@@ -665,7 +665,7 @@ def xyz2AC_huckel(atomicNumList, xyz, charge):
     for i in range(num_atoms):
         for j in range(i+1,num_atoms):
             pair_pop = abs(tri[j,i])   
-            if pair_pop >= 0.15: #arbitry cutoff for bond. May need adjustment
+            if pair_pop >= 0.20: #arbitry cutoff for bond. May need adjustment
                 AC[i,j] = 1
                 AC[j,i] = 1
 
