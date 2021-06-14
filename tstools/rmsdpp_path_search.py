@@ -138,10 +138,13 @@ class XtbCalculator:
             if err.strip() != "normal termination of xtb":
                 raise XtbError("Calculation of {namespace} terminated with error")
 
-        energies = xtb_io.read_energy(out)
-        coordinates = xtb_io.read_opt_structure(out)
+        calc_results = {}
+        calc_results['energy'] = xtb_io.read_energy(out)
+        if self._run_opt:
+            coordinates = xtb_io.read_opt_structure(out)
+            calc_results['opt_coordinates'] = coordinates
 
-        return energies, coordinates
+        return calc_results
 
 
 class XtbPPCustomSearch:
@@ -376,12 +379,14 @@ class XtbPPCustomSearch:
         To be sure what the energies is, perform SP xTB energies on path.
         """
         xtbcalc = XtbCalculator(
-            charge=self._charge, spin=self._spin
+            charge=self._charge, spin=self._spin, opt=False
         )  # Add ekstra kwds such as solvent
         path_sp_energies = []
         for path_point in path:
-            energies, _ = xtbcalc(self._atmoic_symbols, path_point, namespace="sp_calc")
-            path_sp_energies.append(energies["elec_energy"])
+            sp_results = xtbcalc(
+                self._atmoic_symbols, path_point, namespace="sp_calc"
+            )
+            path_sp_energies.append(sp_results['energy']["elec_energy"])
         return np.asarray(path_sp_energies)
 
     def run_path_search(
