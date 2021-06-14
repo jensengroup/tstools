@@ -1,4 +1,7 @@
 import logging
+
+import numpy as np
+
 from rdkit import Chem
 from rdkit.Chem import rdForceFieldHelpers, rdMolAlign
 from rdkit.ForceField import rdForceField
@@ -6,9 +9,31 @@ from rdkit.ForceField import rdForceField
 _logger = logging.getLogger()
 
 
-def refine_path(path_coords, atom_symbols, calcultor):
-    """ """
-    pass
+def interpolate_structures(
+    path_points: list[np.ndarray], atom_symbols, n_points = 20, calculator = None
+):
+    """
+    """
+    if len(path_points) != 2:
+        raise RuntimeError('Can only interpolate between two structures')
+
+    path_m1, path_p1 = path_points
+    n_atoms = len(atom_symbols)
+    
+    difference_mat = path_m1 - path_p1
+    interpolated_coords = np.zeros((n_points, n_atoms, 3))
+    interpolated_energies = np.zeros(n_atoms)
+    for i in range(n_points + 1):
+        interpolated_coords[i - 1] = path_p1 + i / n_points * difference_mat
+
+    if calculator is None:
+        return interpolated_coords, interpolated_energies
+
+    for i, coords in enumerate(interpolated_coords):
+        energies = calculator(atom_symbols, coords, namespace="interpolate")['energy']
+        interpolated_energies[i] = energies['elec_energy']
+    
+    return interpolated_coords, interpolated_energies
 
 
 def refine_uff_dist_constrained(

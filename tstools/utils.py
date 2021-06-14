@@ -3,6 +3,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import Draw, rdChemReactions
 
+from tstools.xtb_io import write_xyz
 
 def get_fragments(molobj):
     return list(Chem.GetMolFrags(molobj, asMols=True, sanitizeFrags=False))
@@ -33,6 +34,14 @@ def get_bond_change_idx(reactant, product):
     bond_change = ac_reactant - ac_product
     bond_change_idx = np.where(np.triu(bond_change) != 0)
     return list(zip(*bond_change_idx))
+
+
+def write_path(path_coords, symbols, filename: str = "path.xyz"):
+    """ """
+    with open(filename, 'w') as pathfile:
+        for coords in path_coords:
+            xyz = write_xyz(coords=coords, atomic_symbols=symbols)
+            pathfile.write(xyz)
 
 
 def draw_reaction(
